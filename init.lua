@@ -7,6 +7,8 @@ pathfinder = {}
 --~ minetest.get_name_from_content_id(id)
 --~ local ivm = a:index(pos.x, pos.y, pos.z)
 --~ local ivm = a:indexp(pos)
+--~ minetest.hash_node_position({x=,y=,z=})
+--~ minetest.get_position_from_hash(hash)
 
 print("loading pathfinder")
 
@@ -18,9 +20,7 @@ local a
 local data
 
 
-local function get_distance(start_index, end_index)
-	local start_pos = a:position(start_index)
-	local end_pos = a:position(end_index)
+local function get_distance(start_pos, end_pos)
 
 	local distX = math.abs(start_pos.x - end_pos.x)
 	local distZ = math.abs(start_pos.z - end_pos.z)
@@ -32,30 +32,13 @@ local function get_distance(start_index, end_index)
 	end
 end
 
-local function walkable(node_id)
-	if node_id then
-		local name = minetest.get_name_from_content_id(node_id)
+local function walkable(name)
 		return minetest.registered_nodes[name].walkable
-	end
-	-- out of range.
-	return true
 end
 
 function pathfinder.find_path(endpos, pos, entity)
-
-	local radius = vector.distance(pos, endpos) + 32
-	vm = VoxelManip()
-	local minp, maxp = vm:read_from_map(
-			vector.subtract(pos, {x=radius, y=16, z=radius}),
-			vector.add(pos, {x=radius, y=16, z=radius})
-	)
-	a = VoxelArea:new({MinEdge = minp, MaxEdge = maxp})
-	data = vm:get_data()
-
-	local starttime = minetest.get_us_time()
-
-	local start_index = a:indexp(pos)
-	local target_index = a:indexp(endpos)
+	local start_index = minetest.hash_node_position(pos)
+	local target_index = minetest.hash_node_position(endpos)
 	local count = 1
 
 	openSet = {}
@@ -64,10 +47,8 @@ function pathfinder.find_path(endpos, pos, entity)
 	openSet[start_index] = {hCost = 0, gCost = 0, fCost = 0, parent = 0, pos = pos}
 
 	-- Entity values
-	local entity_height = entity.collisionbox[5] - entity.collisionbox[2]
---~ print(dump(entity))
---~ print(entity.object:get_luaentity().name)
---~ print(dump(minetest.registered_entities[entity.object:get_luaentity().name]))
+	--~ local entity_height = entity.collisionbox[5] - entity.collisionbox[2]
+
 	repeat
 		local current_index
 		local current_values
@@ -86,17 +67,12 @@ function pathfinder.find_path(endpos, pos, entity)
 		openSet[current_index] = nil
 		closedSet[current_index] = current_values
 		count = count - 1
+
 		if current_index == target_index then
 			print("Success")
 			local path = {}
-			--~ local file = io.open("debug.txt", "w")
-			--~ io.output(file)
-			--~ io.write(start_index.." "..target_index)
-			--~ io.write(dump(closedSet))
-			--~ io.write(dump(openSet))
-			--~ io.close(file)
 			repeat
-				table.insert(path, a:position(closedSet[current_index].parent))
+				table.insert(path, closedSet[current_index].pos)
 				current_index = closedSet[current_index].parent
 				if #path > 100 then
 					print("path to long")
@@ -108,63 +84,76 @@ function pathfinder.find_path(endpos, pos, entity)
 
 			openSet = nil
 			closedSet = nil
-			print("Pathfinder: "..(minetest.get_us_time() - starttime) / 1000 .."ms")
 			print("path lenght: "..#path)
 			return path
 		end
 
-		local current_pos = a:position(current_index)
+		local current_pos = current_values.pos
 
 		local neighbors = {}
-		for neighbor in a:iterp({x = current_pos.x - 1, y = current_pos.y, z = current_pos.z - 1},
-				{x = current_pos.x + 1, y = current_pos.y, z = current_pos.z + 1}) do
-			table.insert(neighbors, neighbor)
+		local neighbors_index = 1
+		for z = -1, 1 do
+		for x = -1, 1 do
+			local neighbor_pos = {x = current_pos.x + x, y = current_pos.y, z = current_pos.z + z}
+			local neighbor_name = minetest.get_node(neighbor_pos).name
+			local neighbor_hash = minetest.hash_node_position(neighbor_pos)
+			neighbors[neighbors_index] = {
+					name = neighbor_name,
+					hash = neighbor_hash,
+					pos = neighbor_pos,
+					walkable = walkable(neighbor_name),
+			}
+			neighbors_index = neighbors_index + 1
+		end
 		end
 
-		for id, neighbor in ipairs(neighbors) do
+		for id, neighbor in pairs(neighbors) do
 			-- don't cut corners
 			local cut_corner = false
 			if id == 1 then
-				if walkable(data[neighbors[id + 1]]) or walkable(data[neighbors[id + 3]]) then
+				if neighbors[id + 1].walkable or neighbors[id + 3].walkable then
 					cut_corner = true
 				end
 			elseif id == 3 then
-				if walkable(data[neighbors[id - 1]]) or walkable(data[neighbors[id + 3]]) then
+				if neighbors[id - 1].walkable or neighbors[id + 3].walkable then
 					cut_corner = true
 				end
 			elseif id == 7 then
-				if walkable(data[neighbors[id + 1]]) or walkable(data[neighbors[id - 3]]) then
+				if neighbors[id + 1].walkable or neighbors[id - 3].walkable then
 					cut_corner = true
 				end
 			elseif id == 9 then
-				if walkable(data[neighbors[id - 1]]) or walkable(data[neighbors[id - 3]]) then
+				if neighbors[id - 1].walkable or neighbors[id - 3].walkable then
 					cut_corner = true
 				end
 			end
 
-			if neighbor ~= current_index and not closedSet[neighbor] and not walkable(data[neighbor]) and not cut_corner then
-				local move_cost_to_neighbor = current_values.gCost + get_distance(current_index, neighbor)
+			if neighbor.hash ~= current_index and not closedSet[neighbor.hash] and not neighbor.walkable and not cut_corner then
+				local move_cost_to_neighbor = current_values.gCost + get_distance(current_values.pos, neighbor.pos)
 				local gCost = 0
-				if openSet[neighbor] then
-					gCost = openSet[neighbor].gCost
+				if openSet[neighbor.hash] then
+					gCost = openSet[neighbor.hash].gCost
 				end
-				if move_cost_to_neighbor < gCost or not openSet[neighbor] then
-					local hCost = get_distance(neighbor, target_index)
-					openSet[neighbor] = {
+				if move_cost_to_neighbor < gCost or not openSet[neighbor.hash] then
+					if not openSet[neighbor.hash] then
+						count = count + 1
+					end
+					local hCost = get_distance(neighbor.pos, endpos)
+					openSet[neighbor.hash] = {
 							gCost = move_cost_to_neighbor,
 							hCost = hCost,
 							fCost = move_cost_to_neighbor + hCost,
 							parent = current_index,
-							pos = a:position(neighbor)
+							pos = neighbor.pos
 					}
-					count = count + 1
 				end
 			end
 		end
-		if count > 10000 then
+		if count > 100 then
 			print("fail")
 			return
 		end
 	until count < 1
+	print("count < 1")
 	return
 end
