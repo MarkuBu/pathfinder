@@ -131,6 +131,9 @@ function pathfinder.find_path(pos, endpos, entity)
 			local path = {}
 			local reverse_path = {}
 			repeat
+				if not closedSet[current_index] then
+					return
+				end
 				table.insert(path, closedSet[current_index].pos)
 				current_index = closedSet[current_index].parent
 				if #path > 100 then
