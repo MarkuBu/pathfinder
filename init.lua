@@ -17,9 +17,6 @@ current_value
 ^ {int:hCost, int:gCost, int:fCost, hash:parent, vect:pos}
 ]]--
 
-
-print("loading pathfinder")
-
 local openSet = {}
 local closedSet = {}
 
@@ -45,20 +42,9 @@ local function get_distance_to_neighbor(start_pos, end_pos)
 		return (14 * distX + 10 * (distZ - distX)) * (distY + 1)
 	end
 end
+
 local function walkable(node)
 		return minetest.registered_nodes[node.name].walkable
-end
-
-local function check_clearance(cpos, x, z, height)
-	for i = 1, height do
-		local n_name = minetest.get_node({x = cpos.x + x, y = cpos.y + i, z = cpos.z + z}).name
-		local c_name = minetest.get_node({x = cpos.x, y = cpos.y + i, z = cpos.z}).name
-		--~ print(i, n_name, c_name)
-		if walkable(n_name) or walkable(c_name) then
-			return false
-		end
-	end
-	return true
 end
 
 local function get_neighbor_ground_level(pos, jump_height, fall_height)
@@ -87,21 +73,68 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 	end
 end
 
-function pathfinder.find_path(pos, endpos, entity)
+-- local function dot(a, b)
+-- 	return a.x * b.x + a.y * b.y + a.z * b.z
+-- end
+--
+-- local function len(a)
+--   return math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
+-- end
+--
+-- local function lensq(a)
+--   return a.x * a.x + a.y * a.y + a.z * a.z
+-- end
+--
+-- local function normalize(a)
+--   local l = len(a)
+--   a.x = a.x / l
+--   a.y = a.y / l
+--   a.z = a.z / l
+--   return a
+-- end
+
+function pathfinder.find_path(pos, endpos, entity, dtime)
+	-- if dtime > 0.1 then
+	-- 	return
+	-- end
+
+	-- round positions if not done by former functions
+	pos = {
+			x = math.floor(pos.x + 0.5),
+			y = math.floor(pos.y + 0.5),
+			z = math.floor(pos.z + 0.5)
+	}
+
+	endpos = {
+			x = math.floor(endpos.x + 0.5),
+			y = math.floor(endpos.y + 0.5),
+			z = math.floor(endpos.z + 0.5)
+	}
+
+	local target_node = minetest.get_node(endpos)
+	if walkable(target_node) then
+		endpos.y = endpos.y + 1
+	end
+	local start_time = minetest.get_us_time()
 	local start_index = minetest.hash_node_position(pos)
 	local target_index = minetest.hash_node_position(endpos)
 	local count = 1
 
 	openSet = {}
 	closedSet = {}
+	-- minetest.set_node(pos, {name = "default:glass"})
+	-- minetest.set_node(endpos, {name = "default:glass"})
+	-- print(dump(pos))
+	-- print(endpos)
 
 	local h_start = get_distance(pos, endpos)
 	openSet[start_index] = {hCost = h_start, gCost = 0, fCost = h_start, parent = nil, pos = pos}
 
 	-- Entity values
-	local entity_height = math.ceil(entity.collisionbox[5] - entity.collisionbox[2])
-	local entity_fear_height = entity.fear_height or 2
+	local entity_height = math.ceil(entity.collisionbox[5] - entity.collisionbox[2]) or 2
+	local entity_fear_height = entity.fear_height or 3
 	local entity_jump_height = entity.jump_height or 1
+	local neighbors_cache = {}
 
 	repeat
 		local current_index
@@ -113,7 +146,6 @@ function pathfinder.find_path(pos, endpos, entity)
 			current_values = v
 			break
 		end
-
 		-- Search for lowest fCost
 		for i, v in pairs(openSet) do
 			if v.fCost < openSet[current_index].fCost or v.fCost == current_values.fCost and v.hCost < current_values.hCost then
@@ -127,20 +159,22 @@ function pathfinder.find_path(pos, endpos, entity)
 		count = count - 1
 
 		if current_index == target_index then
-			-- print("Success")
+			print("Success")
 			local path = {}
-			local reverse_path = {}
 			repeat
 				if not closedSet[current_index] then
 					return
 				end
 				table.insert(path, closedSet[current_index].pos)
 				current_index = closedSet[current_index].parent
-				if #path > 100 then
-					-- print("path to long")
-					return
-				end
 			until start_index == current_index
+			table.insert(path, closedSet[current_index].pos)
+			local file = io.open ("path.txt" , "w")
+			file:write("path = ", dump(path), "\n")
+			file:write("openSet = ", dump(openSet), "\n")
+			file:write("closedSet = ", dump(closedSet), "\n")
+			file:close()
+			local reverse_path = {}
 			repeat
 				table.insert(reverse_path, table.remove(path))
 			until #path == 0
@@ -159,49 +193,63 @@ function pathfinder.find_path(pos, endpos, entity)
 			local neighbor_ground_level = get_neighbor_ground_level(neighbor_pos, entity_jump_height, entity_fear_height)
 			local neighbor_clearance = false
 			if neighbor_ground_level then
-				-- print(neighbor_ground_level.y - current_pos.y)
-				-- minetest.set_node(neighbor_ground_level, {name = "default:dry_shrub"})
-				local node_above_head = minetest.get_node(
-						{x = current_pos.x, y = current_pos.y + entity_height, z = current_pos.z})
-				if neighbor_ground_level.y - current_pos.y > 0 and not walkable(node_above_head) then
-					local height = -1
-					repeat
-						height = height + 1
-						local node = minetest.get_node(
-								{x = neighbor_ground_level.x,
-								y = neighbor_ground_level.y + height,
-								z = neighbor_ground_level.z})
-					until walkable(node) or height > entity_height
-					if height >= entity_height then
-						neighbor_clearance = true
-					end
-				elseif neighbor_ground_level.y - current_pos.y > 0 and walkable(node_above_head) then
+				local neighbor_hash = minetest.hash_node_position(neighbor_ground_level)
+				if neighbors_cache[neighbor_hash] then
+					-- print("hit")
 					neighbors[neighbors_index] = {
-							hash = nil,
-							pos = nil,
-							clear = nil,
-							walkable = nil,
+							hash = neighbor_hash,
+							pos = neighbor_ground_level,
+							clear = neighbors_cache[neighbor_hash].clear,
+							walkable = walkable,
 					}
 				else
-					local height = -1
-					repeat
-						height = height + 1
-						local node = minetest.get_node(
-								{x = neighbor_ground_level.x,
-								y = current_pos.y + height,
-								z = neighbor_ground_level.z})
-					until walkable(node) or height > entity_height
-					if height >= entity_height then
-						neighbor_clearance = true
+					local node_above_head = minetest.get_node(
+							{x = current_pos.x, y = current_pos.y + entity_height, z = current_pos.z})
+					if neighbor_ground_level.y - current_pos.y > 0 and not walkable(node_above_head) then
+						local height = -1
+						repeat
+							height = height + 1
+							local node = minetest.get_node(
+									{x = neighbor_ground_level.x,
+									y = neighbor_ground_level.y + height,
+									z = neighbor_ground_level.z})
+						until walkable(node) or height > entity_height
+						if height >= entity_height then
+							neighbor_clearance = true
+						end
+					elseif neighbor_ground_level.y - current_pos.y > 0 and walkable(node_above_head) then
+						neighbors[neighbors_index] = {
+								hash = nil,
+								pos = nil,
+								clear = nil,
+								walkable = nil,
+						}
+					else
+						local height = -1
+						repeat
+							height = height + 1
+							local node = minetest.get_node(
+									{x = neighbor_ground_level.x,
+									y = current_pos.y + height,
+									z = neighbor_ground_level.z})
+						until walkable(node) or height > entity_height
+						if height >= entity_height then
+							neighbor_clearance = true
+						end
 					end
-				end
 
-				neighbors[neighbors_index] = {
-						hash = minetest.hash_node_position(neighbor_ground_level),
+					neighbors[neighbors_index] = {
+							hash = minetest.hash_node_position(neighbor_ground_level),
+							pos = neighbor_ground_level,
+							clear = neighbor_clearance,
+							walkable = walkable(neighbor),
+					}
+					neighbors_cache[neighbor_hash] = {
 						pos = neighbor_ground_level,
 						clear = neighbor_clearance,
-						walkable = walkable(neighbor),
-				}
+						walkable = walkable(neighbor)
+					}
+				end
 			else
 				neighbors[neighbors_index] = {
 						hash = nil,
@@ -210,6 +258,7 @@ function pathfinder.find_path(pos, endpos, entity)
 						walkable = nil,
 				}
 			end
+
 			neighbors_index = neighbors_index + 1
 		end
 		end
@@ -219,22 +268,22 @@ function pathfinder.find_path(pos, endpos, entity)
 			local cut_corner = false
 			if id == 1 then
 				if not neighbors[id + 1].clear or not neighbors[id + 3].clear
-					or neighbors[id + 1].walkable or neighbors[id + 3].walkable then
+						or neighbors[id + 1].walkable or neighbors[id + 3].walkable then
 					cut_corner = true
 				end
 			elseif id == 3 then
 				if not neighbors[id - 1].clear or not neighbors[id + 3].clear
-					or neighbors[id - 1].walkable or neighbors[id + 3].walkable then
+						or neighbors[id - 1].walkable or neighbors[id + 3].walkable then
 					cut_corner = true
 				end
 			elseif id == 7 then
 				if not neighbors[id + 1].clear or not neighbors[id - 3].clear
-				or neighbors[id + 1].walkable or neighbors[id - 3].walkable then
+						or neighbors[id + 1].walkable or neighbors[id - 3].walkable then
 					cut_corner = true
 				end
 			elseif id == 9 then
 				if not neighbors[id - 1].clear or not neighbors[id - 3].clear
-				or neighbors[id - 1].walkable or neighbors[id - 3].walkable then
+						or neighbors[id - 1].walkable or neighbors[id - 3].walkable then
 					cut_corner = true
 				end
 			end
@@ -257,14 +306,19 @@ function pathfinder.find_path(pos, endpos, entity)
 							parent = current_index,
 							pos = neighbor.pos
 					}
+					-- minetest.swap_node(neighbor.pos, {name="air"})
 				end
 			end
 		end
 		if count > 100 then
-			-- print("fail")
+			print("fail")
+			return
+		end
+		if (minetest.get_us_time() - start_time) / 1000 > 30 - dtime * 50 then
+			print("timeout")
 			return
 		end
 	until count < 1
-	-- print("count < 1")
+	print("count < 1")
 	return {pos}
 end
