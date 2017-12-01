@@ -43,14 +43,42 @@ local function get_distance_to_neighbor(start_pos, end_pos)
 	end
 end
 
-local function walkable(node)
+local function walkable(node, pos, current_pos)
+		--~ if string.find(minetest.get_node(current_pos).name,"doors:door") and
+				--~ string.find(node.name,"doors:door") then
+			--~ return true
+
+		--~ else
+		if string.find(node.name,"doors:door") then
+			if (node.param2 == 0 or
+					node.param2 == 2) and
+					math.abs(pos.z - current_pos.z) > 0 and
+					pos.x == current_pos.x then
+				return true
+			elseif (node.param2 == 1 or
+					node.param2 == 3) and
+					math.abs(pos.z - current_pos.z) > 0 and
+					pos.x == current_pos.x then
+				return false
+			elseif (node.param2 == 0 or
+					node.param2 == 2) and
+					math.abs(pos.x - current_pos.x) > 0 and
+					pos.z == current_pos.z then
+				return false
+			elseif (node.param2 == 1 or
+					node.param2 == 3) and
+					math.abs(pos.x - current_pos.x) > 0 and
+					pos.z == current_pos.z then
+				return true
+			end
+		end
 		return minetest.registered_nodes[node.name].walkable
 end
 
-local function get_neighbor_ground_level(pos, jump_height, fall_height)
+local function get_neighbor_ground_level(pos, jump_height, fall_height, current_pos)
 	local node = minetest.get_node(pos)
 	local height = 0
-	if walkable(node) then
+	if walkable(node, pos, current_pos) then
 		repeat
 			height = height + 1
 			if height > jump_height then
@@ -58,7 +86,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 			end
 			pos.y = pos.y + 1
 			node = minetest.get_node(pos)
-		until not walkable(node)
+		until not walkable(node, pos, current_pos)
 		return pos
 	else
 		repeat
@@ -68,7 +96,7 @@ local function get_neighbor_ground_level(pos, jump_height, fall_height)
 			end
 			pos.y = pos.y - 1
 			node = minetest.get_node(pos)
-		until walkable(node)
+		until walkable(node, pos, current_pos)
 		return {x = pos.x, y = pos.y + 1, z = pos.z}
 	end
 end
@@ -112,9 +140,23 @@ local dtime = 0.01
 	}
 
 	local target_node = minetest.get_node(endpos)
-	if walkable(target_node) then
+	if walkable(target_node, endpos, endpos) then
 		endpos.y = endpos.y + 1
 	end
+
+	local start_node = minetest.get_node(pos)
+	if string.find(start_node.name,"doors:door") then
+		if start_node.param2 == 0 then
+			pos.z = pos.z + 1
+		elseif start_node.param2 == 1 then
+			pos.x = pos.x + 1
+		elseif start_node.param2 == 2 then
+			pos.z = pos.z - 1
+		elseif start_node.param2 == 3 then
+			pos.x = pos.x - 1
+		end
+	end
+
 	local start_time = minetest.get_us_time()
 	local start_index = minetest.hash_node_position(pos)
 	local target_index = minetest.hash_node_position(endpos)
@@ -184,25 +226,25 @@ local dtime = 0.01
 		for x = -1, 1 do
 			local neighbor_pos = {x = current_pos.x + x, y = current_pos.y, z = current_pos.z + z}
 			local neighbor = minetest.get_node(neighbor_pos)
-			local neighbor_ground_level = get_neighbor_ground_level(neighbor_pos, entity_jump_height, entity_fear_height)
+			local neighbor_ground_level = get_neighbor_ground_level(neighbor_pos, entity_jump_height, entity_fear_height, current_pos)
 			local neighbor_clearance = false
 			if neighbor_ground_level then
 				local neighbor_hash = minetest.hash_node_position(neighbor_ground_level)
-				local node_above_head = minetest.get_node(
-						{x = current_pos.x, y = current_pos.y + entity_height, z = current_pos.z})
-				if neighbor_ground_level.y - current_pos.y > 0 and not walkable(node_above_head) then
+				local pos_above_head = {x = current_pos.x, y = current_pos.y + entity_height, z = current_pos.z}
+				local node_above_head = minetest.get_node(pos_above_head)
+				if neighbor_ground_level.y - current_pos.y > 0 and not walkable(node_above_head, pos_above_head, current_pos) then
 					local height = -1
 					repeat
 						height = height + 1
-						local node = minetest.get_node(
-								{x = neighbor_ground_level.x,
-								y = neighbor_ground_level.y + height,
-								z = neighbor_ground_level.z})
-					until walkable(node) or height > entity_height
+						local pos = {	x = neighbor_ground_level.x,
+										y = neighbor_ground_level.y + height,
+										z = neighbor_ground_level.z}
+						local node = minetest.get_node(pos)
+					until walkable(node, pos, current_pos) or height > entity_height
 					if height >= entity_height then
 						neighbor_clearance = true
 					end
-				elseif neighbor_ground_level.y - current_pos.y > 0 and walkable(node_above_head) then
+				elseif neighbor_ground_level.y - current_pos.y > 0 and walkable(node_above_head, pos_above_head, current_pos) then
 					neighbors[neighbors_index] = {
 							hash = nil,
 							pos = nil,
@@ -213,11 +255,11 @@ local dtime = 0.01
 					local height = -1
 					repeat
 						height = height + 1
-						local node = minetest.get_node(
-								{x = neighbor_ground_level.x,
-								y = current_pos.y + height,
-								z = neighbor_ground_level.z})
-					until walkable(node) or height > entity_height
+						local pos = {	x = neighbor_ground_level.x,
+										y = current_pos.y + height,
+										z = neighbor_ground_level.z}
+						local node = minetest.get_node(pos)
+					until walkable(node, pos, current_pos) or height > entity_height
 					if height >= entity_height then
 						neighbor_clearance = true
 					end
@@ -227,7 +269,7 @@ local dtime = 0.01
 						hash = minetest.hash_node_position(neighbor_ground_level),
 						pos = neighbor_ground_level,
 						clear = neighbor_clearance,
-						walkable = walkable(neighbor),
+						walkable = walkable(neighbor, neighbor_pos, current_pos),
 				}
 			else
 				neighbors[neighbors_index] = {
@@ -242,11 +284,9 @@ local dtime = 0.01
 		end
 		end
 
-		local cut_corner = false
-
 		for id, neighbor in pairs(neighbors) do
 			-- don't cut corners
-			cut_corner = false
+			local cut_corner = false
 			if id == 1 then
 				if not neighbors[id + 1].clear or not neighbors[id + 3].clear
 						or neighbors[id + 1].walkable or neighbors[id + 3].walkable then
