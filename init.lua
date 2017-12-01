@@ -93,11 +93,11 @@ end
 --   return a
 -- end
 
-function pathfinder.find_path(pos, endpos, entity, dtime)
+function pathfinder.find_path(pos, endpos)--, entity, dtime)
 	-- if dtime > 0.1 then
 	-- 	return
 	-- end
-
+local dtime = 0.01
 	-- round positions if not done by former functions
 	pos = {
 			x = math.floor(pos.x + 0.5),
@@ -131,9 +131,9 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 	openSet[start_index] = {hCost = h_start, gCost = 0, fCost = h_start, parent = nil, pos = pos}
 
 	-- Entity values
-	local entity_height = math.ceil(entity.collisionbox[5] - entity.collisionbox[2]) or 2
-	local entity_fear_height = entity.fear_height or 3
-	local entity_jump_height = entity.jump_height or 1
+	local entity_height = 1-- math.ceil(entity.collisionbox[5] - entity.collisionbox[2]) or 2
+	local entity_fear_height = 3 --entity.fear_height or 3
+	local entity_jump_height = 1 --entity.jump_height or 1
 	local neighbors_cache = {}
 
 	repeat
@@ -159,7 +159,7 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 		count = count - 1
 
 		if current_index == target_index then
-			print("Success")
+			print("Success in " .. (minetest.get_us_time() - start_time) / 1000 .. "ms")
 			local path = {}
 			repeat
 				if not closedSet[current_index] then
@@ -169,16 +169,10 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 				current_index = closedSet[current_index].parent
 			until start_index == current_index
 			table.insert(path, closedSet[current_index].pos)
-			local file = io.open ("path.txt" , "w")
-			file:write("path = ", dump(path), "\n")
-			file:write("openSet = ", dump(openSet), "\n")
-			file:write("closedSet = ", dump(closedSet), "\n")
-			file:close()
 			local reverse_path = {}
 			repeat
 				table.insert(reverse_path, table.remove(path))
 			until #path == 0
-			-- print("path lenght: "..#reverse_path)
 			return reverse_path
 		end
 
@@ -194,62 +188,47 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 			local neighbor_clearance = false
 			if neighbor_ground_level then
 				local neighbor_hash = minetest.hash_node_position(neighbor_ground_level)
-				if neighbors_cache[neighbor_hash] then
-					-- print("hit")
+				local node_above_head = minetest.get_node(
+						{x = current_pos.x, y = current_pos.y + entity_height, z = current_pos.z})
+				if neighbor_ground_level.y - current_pos.y > 0 and not walkable(node_above_head) then
+					local height = -1
+					repeat
+						height = height + 1
+						local node = minetest.get_node(
+								{x = neighbor_ground_level.x,
+								y = neighbor_ground_level.y + height,
+								z = neighbor_ground_level.z})
+					until walkable(node) or height > entity_height
+					if height >= entity_height then
+						neighbor_clearance = true
+					end
+				elseif neighbor_ground_level.y - current_pos.y > 0 and walkable(node_above_head) then
 					neighbors[neighbors_index] = {
-							hash = neighbor_hash,
-							pos = neighbor_ground_level,
-							clear = neighbors_cache[neighbor_hash].clear,
-							walkable = walkable,
+							hash = nil,
+							pos = nil,
+							clear = nil,
+							walkable = nil,
 					}
 				else
-					local node_above_head = minetest.get_node(
-							{x = current_pos.x, y = current_pos.y + entity_height, z = current_pos.z})
-					if neighbor_ground_level.y - current_pos.y > 0 and not walkable(node_above_head) then
-						local height = -1
-						repeat
-							height = height + 1
-							local node = minetest.get_node(
-									{x = neighbor_ground_level.x,
-									y = neighbor_ground_level.y + height,
-									z = neighbor_ground_level.z})
-						until walkable(node) or height > entity_height
-						if height >= entity_height then
-							neighbor_clearance = true
-						end
-					elseif neighbor_ground_level.y - current_pos.y > 0 and walkable(node_above_head) then
-						neighbors[neighbors_index] = {
-								hash = nil,
-								pos = nil,
-								clear = nil,
-								walkable = nil,
-						}
-					else
-						local height = -1
-						repeat
-							height = height + 1
-							local node = minetest.get_node(
-									{x = neighbor_ground_level.x,
-									y = current_pos.y + height,
-									z = neighbor_ground_level.z})
-						until walkable(node) or height > entity_height
-						if height >= entity_height then
-							neighbor_clearance = true
-						end
+					local height = -1
+					repeat
+						height = height + 1
+						local node = minetest.get_node(
+								{x = neighbor_ground_level.x,
+								y = current_pos.y + height,
+								z = neighbor_ground_level.z})
+					until walkable(node) or height > entity_height
+					if height >= entity_height then
+						neighbor_clearance = true
 					end
+				end
 
-					neighbors[neighbors_index] = {
-							hash = minetest.hash_node_position(neighbor_ground_level),
-							pos = neighbor_ground_level,
-							clear = neighbor_clearance,
-							walkable = walkable(neighbor),
-					}
-					neighbors_cache[neighbor_hash] = {
+				neighbors[neighbors_index] = {
+						hash = minetest.hash_node_position(neighbor_ground_level),
 						pos = neighbor_ground_level,
 						clear = neighbor_clearance,
-						walkable = walkable(neighbor)
-					}
-				end
+						walkable = walkable(neighbor),
+				}
 			else
 				neighbors[neighbors_index] = {
 						hash = nil,
@@ -263,9 +242,11 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 		end
 		end
 
+		local cut_corner = false
+
 		for id, neighbor in pairs(neighbors) do
 			-- don't cut corners
-			local cut_corner = false
+			cut_corner = false
 			if id == 1 then
 				if not neighbors[id + 1].clear or not neighbors[id + 3].clear
 						or neighbors[id + 1].walkable or neighbors[id + 3].walkable then
@@ -287,7 +268,6 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 					cut_corner = true
 				end
 			end
-
 			if neighbor.hash ~= current_index and not closedSet[neighbor.hash] and neighbor.clear and not cut_corner then
 				local move_cost_to_neighbor = current_values.gCost + get_distance_to_neighbor(current_values.pos, neighbor.pos)
 				local gCost = 0
@@ -306,7 +286,6 @@ function pathfinder.find_path(pos, endpos, entity, dtime)
 							parent = current_index,
 							pos = neighbor.pos
 					}
-					-- minetest.swap_node(neighbor.pos, {name="air"})
 				end
 			end
 		end
