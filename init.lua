@@ -44,11 +44,6 @@ local function get_distance_to_neighbor(start_pos, end_pos)
 end
 
 local function walkable(node, pos, current_pos)
-		--~ if string.find(minetest.get_node(current_pos).name,"doors:door") and
-				--~ string.find(node.name,"doors:door") then
-			--~ return true
-
-		--~ else
 		if string.find(node.name,"doors:door") then
 			if (node.param2 == 0 or
 					node.param2 == 2) and
@@ -71,6 +66,30 @@ local function walkable(node, pos, current_pos)
 					pos.z == current_pos.z then
 				return true
 			end
+		elseif string.find(node.name,"doors:hidden") then
+			local node_door = minetest.get_node({x = pos.x, y = pos.y - 1, z = pos.z})
+			if (node_door.param2 == 0 or
+					node_door.param2 == 2) and
+					math.abs(pos.z - current_pos.z) > 0 and
+					pos.x == current_pos.x then
+				return true
+			elseif (node_door.param2 == 1 or
+					node_door.param2 == 3) and
+					math.abs(pos.z - current_pos.z) > 0 and
+					pos.x == current_pos.x then
+				return false
+			elseif (node_door.param2 == 0 or
+					node_door.param2 == 2) and
+					math.abs(pos.x - current_pos.x) > 0 and
+					pos.z == current_pos.z then
+				return false
+			elseif (node_door.param2 == 1 or
+					node_door.param2 == 3) and
+					math.abs(pos.x - current_pos.x) > 0 and
+					pos.z == current_pos.z then
+				return true
+			end
+
 		end
 		return minetest.registered_nodes[node.name].walkable
 end
@@ -121,11 +140,10 @@ end
 --   return a
 -- end
 
-function pathfinder.find_path(pos, endpos)--, entity, dtime)
+function pathfinder.find_path(pos, endpos, entity, dtime)
 	-- if dtime > 0.1 then
 	-- 	return
 	-- end
-local dtime = 0.01
 	-- round positions if not done by former functions
 	pos = {
 			x = math.floor(pos.x + 0.5),
@@ -173,9 +191,9 @@ local dtime = 0.01
 	openSet[start_index] = {hCost = h_start, gCost = 0, fCost = h_start, parent = nil, pos = pos}
 
 	-- Entity values
-	local entity_height = 1-- math.ceil(entity.collisionbox[5] - entity.collisionbox[2]) or 2
-	local entity_fear_height = 3 --entity.fear_height or 3
-	local entity_jump_height = 1 --entity.jump_height or 1
+	local entity_height = math.ceil(entity.collisionbox[5] - entity.collisionbox[2]) or 2
+	local entity_fear_height = entity.fear_height or 3
+	local entity_jump_height = entity.jump_height or 1
 	local neighbors_cache = {}
 
 	repeat
@@ -201,7 +219,7 @@ local dtime = 0.01
 		count = count - 1
 
 		if current_index == target_index then
-			print("Success in " .. (minetest.get_us_time() - start_time) / 1000 .. "ms")
+			--~ minetest.chat_send_all("Found path in " .. (minetest.get_us_time() - start_time) / 1000 .. "ms")
 			local path = {}
 			repeat
 				if not closedSet[current_index] then
@@ -215,6 +233,7 @@ local dtime = 0.01
 			repeat
 				table.insert(reverse_path, table.remove(path))
 			until #path == 0
+			minetest.chat_send_all("Found path in " .. (minetest.get_us_time() - start_time) / 1000 .. "ms. " .. "Path length: " .. #reverse_path)
 			return reverse_path
 		end
 
@@ -329,15 +348,15 @@ local dtime = 0.01
 				end
 			end
 		end
-		if count > 100 then
-			print("fail")
+		if count > 300 then
+			minetest.chat_send_all("Path fail")
 			return
 		end
 		if (minetest.get_us_time() - start_time) / 1000 > 30 - dtime * 50 then
-			print("timeout")
+			minetest.chat_send_all("Path timeout")
 			return
 		end
 	until count < 1
-	print("count < 1")
+	minetest.chat_send_all("count < 1")
 	return {pos}
 end
